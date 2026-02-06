@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Three.js + Rapier Ragdoll Drag (Fixed)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin:0; padding:0; overflow:hidden; background:#0b0f16; }
+    #info{
+      position:fixed; left:12px; top:12px;
+      font-family:system-ui, sans-serif;
+      color:#d7e3ff; background:rgba(0,0,0,0.35);
+      padding:10px 12px; border-radius:12px;
+      font-size:14px; line-height:1.35;
+      user-select:none;
+      pointer-events:none; /* Let clicks pass through to canvas */
+    }
+    #info b{ color:#ffffff; }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <b>Ragdoll + Rapier</b><br/>
+    • Left click = grab + drag<br/>
+    • Release = drop<br/>
+    • Scroll = zoom
+  </div>
+
+  <!-- 1. Add Import Map to resolve "three" inside OrbitControls -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    // 2. Use the mapped names
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js";
+
+    // ---------- Three.js Setup ----------
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0b0f16, 10, 55);
+
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+    camera.position.set(0, 4, 10);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.target.set(0, 2, 0);
+
+    const hemi = new THREE.HemisphereLight(0x9bbcff, 0x0b0f16, 0.9);
+    scene.add(hemi);
+
+    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+    dir.position.set(8, 12, 6);
+    dir.castShadow = true;
+    dir.shadow.mapSize.width = 2048;
+    dir.shadow.mapSize.height = 2048;
+    scene.add(dir);
+
+    // Ground visuals
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 });
+    const groundGeo = new THREE.BoxGeometry(40, 1, 40);
+    const groundMesh = new THREE.Mesh(groundGeo, groundMat);
+    groundMesh.position.y = -0.5;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+
+    // ---------- Rapier Setup ----------
+    await RAPIER.init(); // Wait for WASM
+
+    const gravity = { x: 0, y: -9.81, z: 0 };
+    const world = new RAPIER.World(gravity);
+
+    // Ground collider
+    {
+      const rb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0));
+      world.createCollider(RAPIER.ColliderDesc.cuboid(20, 0.5, 20).setFriction(1.0), rb);
+    }
+
+    // ---------- Helpers ----------
+    const meshToBody = new Map(); 
+    const bodyToMesh = new Map(); 
+
+    function addDynamicCapsule(radius, halfHeight, x, y, z, color) {
+      // Rapier capsule uses "halfHeight" = half length of the cylinder part
+      const rbDesc = RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(x, y, z)
+        .setLinearDamping(0.5)
+        .setAngularDamping(0.5);
+
+      const rb = world.createRigidBody(rbDesc);
+
+      const colDesc = RAPIER.ColliderDesc.capsule(halfHeight, radius)
+        .setDensity(1.0)
+        .setFriction(0.8)
+        .setRestitution(0.2);
+
+      world.createCollider(colDesc, rb);
+
+      // Three capsule mesh
+      const geo = new THREE.CapsuleGeometry(radius, halfHeight * 2, 8, 16);
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      scene.add(mesh);
+
+      meshToBody.set(mesh, rb);
+      bodyToMesh.set(rb.handle, mesh);
+
+      return { rb, mesh };
+    }
+
+    function addDynamicBox(hx, hy, hz, x, y, z, color) {
+      const rbDesc = RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(x, y, z)
+        .setLinearDamping(0.5)
+        .setAngularDamping(0.5);
+
+      const rb = world.createRigidBody(rbDesc);
+
+      const colDesc = RAPIER.ColliderDesc.cuboid(hx, hy, hz)
+        .setDensity(1.0)
+        .setFriction(0.8)
+        .setRestitution(0.2);
+
+      world.createCollider(colDesc, rb);
+
+      const geo = new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2);
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      scene.add(mesh);
+
+      meshToBody.set(mesh, rb);
+      bodyToMesh.set(rb.handle, mesh);
+
+      return { rb, mesh };
+    }
+
+    // ---------- Build Ragdoll ----------
+    const parts = {};
+
+    // Torso + pelvis
+    parts.torso  = addDynamicCapsule(0.25, 0.35, 0, 3.0, 0, 0x60a5fa);
+    parts.pelvis = addDynamicBox(0.30, 0.15, 0.15, 0, 2.3, 0, 0x3b82f6);
+
+    // Head
+    parts.head = addDynamicCapsule(0.18, 0.05, 0, 3.8, 0, 0xfbbf24);
+
+    // Arms
+    parts.uarmL = addDynamicCapsule(0.10, 0.25, -0.60, 3.15, 0, 0x93c5fd);
+    parts.larmL = addDynamicCapsule(0.09, 0.25, -1.00, 2.85, 0, 0x93c5fd);
+
+    parts.uarmR = addDynamicCapsule(0.10, 0.25,  0.60, 3.15, 0, 0x93c5fd);
+    parts.larmR = addDynamicCapsule(0.09, 0.25,  1.00, 2.85, 0, 0x93c5fd);
+
+    // Legs
+    parts.ulegL = addDynamicCapsule(0.12, 0.30, -0.25, 1.7, 0, 0x2563eb);
+    parts.llegL = addDynamicCapsule(0.11, 0.30, -0.25, 0.9, 0, 0x2563eb);
+
+    parts.ulegR = addDynamicCapsule(0.12, 0.30,  0.25, 1.7, 0, 0x2563eb);
+    parts.llegR = addDynamicCapsule(0.11, 0.30,  0.25, 0.9, 0, 0x2563eb);
+
+    // Joints helper
+    function spherical(a, b, anchorA, anchorB, limit = 0.8) {
+      const params = RAPIER.JointData.spherical(anchorA, anchorB);
+      // Not all spherical joints in simple physics support limits cleanly without configuration,
+      // but ImpulseJoints work well for holding things together.
+      return world.createImpulseJoint(params, a, b, true);
+    }
+
+    // Connect Parts
+    spherical(parts.torso.rb, parts.pelvis.rb, { x:0, y:-0.45, z:0 }, { x:0, y:0.20, z:0 }); // Spine
+    spherical(parts.torso.rb, parts.head.rb,   { x:0, y:0.45, z:0 },  { x:0, y:-0.15, z:0 }); // Neck
+
+    // Shoulders
+    spherical(parts.torso.rb, parts.uarmL.rb, { x:-0.35, y:0.25, z:0 }, { x:0, y:0.30, z:0 });
+    spherical(parts.torso.rb, parts.uarmR.rb, { x: 0.35, y:0.25, z:0 }, { x:0, y:0.30, z:0 });
+
+    // Elbows
+    spherical(parts.uarmL.rb, parts.larmL.rb, { x:0, y:-0.30, z:0 }, { x:0, y:0.30, z:0 });
+    spherical(parts.uarmR.rb, parts.larmR.rb, { x:0, y:-0.30, z:0 }, { x:0, y:0.30, z:0 });
+
+    // Hips
+    spherical(parts.pelvis.rb, parts.ulegL.rb, { x:-0.20, y:-0.15, z:0 }, { x:0, y:0.35, z:0 });
+    spherical(parts.pelvis.rb, parts.ulegR.rb, { x: 0.20, y:-0.15, z:0 }, { x:0, y:0.35, z:0 });
+
+    // Knees
+    spherical(parts.ulegL.rb, parts.llegL.rb, { x:0, y:-0.35, z:0 }, { x:0, y:0.35, z:0 });
+    spherical(parts.ulegR.rb, parts.llegR.rb, { x:0, y:-0.35, z:0 }, { x:0, y:0.35, z:0 });
+
+
+    // ---------- Drag System ----------
+    const raycaster = new THREE.Raycaster();
+    const mouseNDC = new THREE.Vector2();
+
+    let dragging = false;
+    let draggedBody = null;
+    let dragJoint = null;
+
+    // Invisible kinematic body to pull things
+    const dragHandleRB = world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 100, 0)
+    );
+    // Needs a collider to exist in physics effectively for some checks, though impulse joints work without collision
+    world.createCollider(RAPIER.ColliderDesc.ball(0.01).setSensor(true), dragHandleRB);
+
+    const dragPlane = new THREE.Plane();
+    const dragHit = new THREE.Vector3();
+
+    function getMouse(e) {
+      const r = renderer.domElement.getBoundingClientRect();
+      mouseNDC.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+      mouseNDC.y = -(((e.clientY - r.top) / r.height) * 2 - 1);
+    }
+
+    function startDrag(e) {
+      getMouse(e);
+      raycaster.setFromCamera(mouseNDC, camera);
+
+      const meshes = [...meshToBody.keys()];
+      const hits = raycaster.intersectObjects(meshes, false);
+      
+      if (!hits.length) return;
+
+      const hit = hits[0];
+      const body = meshToBody.get(hit.object);
+      if (!body) return;
+
+      // Disable orbit controls while dragging
+      controls.enabled = false;
+      dragging = true;
+      draggedBody = body;
+
+      // Set drag plane to face camera at hit depth
+      dragPlane.setFromNormalAndCoplanarPoint(
+        camera.getWorldDirection(new THREE.Vector3()).negate(),
+        hit.point
+      );
+
+      // Snap handle to hit point
+      dragHandleRB.setNextKinematicTranslation(hit.point);
+
+      // Connect handle to body
+      // We calculate local anchor on body so we grab exactly where we clicked
+      const localAnchor = body.worldPointToLocal(hit.point);
+      
+      // Spherical joint between kinematic handle and dynamic body
+      const params = RAPIER.JointData.spherical({ x:0, y:0, z:0 }, localAnchor);
+      // Making it 'springy' helps stability
+      params.stiffness = 1.0; 
+      params.damping = 1.0;
+
+      dragJoint = world.createImpulseJoint(params, dragHandleRB, body, true);
+      body.wakeUp();
+    }
+
+    function moveDrag(e) {
+      if (!dragging) return;
+      getMouse(e);
+      
+      raycaster.setFromCamera(mouseNDC, camera);
+      if (raycaster.ray.intersectPlane(dragPlane, dragHit)) {
+        dragHandleRB.setNextKinematicTranslation(dragHit);
+        draggedBody.wakeUp();
+      }
+    }
+
+    function endDrag() {
+      if (!dragging) return;
+      
+      world.removeImpulseJoint(dragJoint, true);
+      dragJoint = null;
+      draggedBody = null;
+      dragging = false;
+      controls.enabled = true;
+    }
+
+    window.addEventListener('pointerdown', (e) => {
+      if(e.button === 0) startDrag(e);
+    });
+    window.addEventListener('pointermove', moveDrag);
+    window.addEventListener('pointerup', endDrag);
+
+    // ---------- Resize ----------
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // ---------- Loop ----------
+    const qTmp = new THREE.Quaternion();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      world.step();
+
+      // Sync visual meshes to physics bodies
+      for (const [handle, mesh] of bodyToMesh.entries()) {
+        const rb = world.getRigidBody(handle);
+        if(!rb) continue;
+        const t = rb.translation();
+        const r = rb.rotation();
+        mesh.position.set(t.x, t.y, t.z);
+        qTmp.set(r.x, r.y, r.z, r.w);
+        mesh.quaternion.copy(qTmp);
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
