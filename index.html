@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Three.js + Rapier Ragdoll Drag (Fixed)</title>
+  <title>Three.js + Rapier Ragdoll (Limits & Speed Cap)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     html, body { margin:0; padding:0; overflow:hidden; background:#0b0f16; }
@@ -21,12 +21,11 @@
 <body>
   <div id="info">
     <b>Ragdoll + Rapier</b><br/>
-    • Left click = grab + drag<br/>
-    • Release = drop<br/>
+    • Speed Limited & Joints Locked<br/>
+    • Left click = drag<br/>
     • Scroll = zoom
   </div>
 
-  <!-- Import Map required for three/addons -->
   <script type="importmap">
     {
       "imports": {
@@ -92,6 +91,7 @@
     const bodyToMesh = new Map(); 
 
     function addDynamicCapsule(radius, halfHeight, x, y, z, color) {
+      // Added damping to naturally slow things down
       const rbDesc = RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(x, y, z)
         .setLinearDamping(0.5)
@@ -159,21 +159,44 @@
     parts.ulegR = addDynamicCapsule(0.12, 0.30,  0.25, 1.7, 0, 0x2563eb);
     parts.llegR = addDynamicCapsule(0.11, 0.30,  0.25, 0.9, 0, 0x2563eb);
 
+    // Helper: Spherical Joint (Free rotation for hips/shoulders)
     function spherical(a, b, anchorA, anchorB) {
       const params = RAPIER.JointData.spherical(anchorA, anchorB);
       return world.createImpulseJoint(params, a, b, true);
     }
 
+    // Helper: Revolute Joint with Limits (Hinge for elbows/knees)
+    function revolute(a, b, anchorA, anchorB, minAngle, maxAngle) {
+      // Rotation axis: X-axis ({x:1, y:0, z:0})
+      const axis = { x: 1, y: 0, z: 0 };
+      const params = RAPIER.JointData.revolute(anchorA, anchorB, axis);
+      // FIXED: Use properties instead of setLimits()
+      params.limitsEnabled = true;
+      params.limits = [minAngle, maxAngle]; 
+      return world.createImpulseJoint(params, a, b, true);
+    }
+
+    // --- Joints Configuration ---
+    
+    // Spine & Head
     spherical(parts.torso.rb, parts.pelvis.rb, {x:0,y:-0.45,z:0}, {x:0,y:0.20,z:0});
     spherical(parts.torso.rb, parts.head.rb,   {x:0,y:0.45,z:0},  {x:0,y:-0.15,z:0});
+    
+    // Shoulders
     spherical(parts.torso.rb, parts.uarmL.rb, {x:-0.35,y:0.25,z:0}, {x:0,y:0.30,z:0});
     spherical(parts.torso.rb, parts.uarmR.rb, {x: 0.35,y:0.25,z:0}, {x:0,y:0.30,z:0});
-    spherical(parts.uarmL.rb, parts.larmL.rb, {x:0,y:-0.30,z:0}, {x:0,y:0.30,z:0});
-    spherical(parts.uarmR.rb, parts.larmR.rb, {x:0,y:-0.30,z:0}, {x:0,y:0.30,z:0});
+
+    // Elbows (Hinge, 0 to 2.5 rads)
+    revolute(parts.uarmL.rb, parts.larmL.rb, {x:0,y:-0.30,z:0}, {x:0,y:0.30,z:0}, 0, 2.5);
+    revolute(parts.uarmR.rb, parts.larmR.rb, {x:0,y:-0.30,z:0}, {x:0,y:0.30,z:0}, 0, 2.5);
+
+    // Hips
     spherical(parts.pelvis.rb, parts.ulegL.rb, {x:-0.20,y:-0.15,z:0}, {x:0,y:0.35,z:0});
     spherical(parts.pelvis.rb, parts.ulegR.rb, {x: 0.20,y:-0.15,z:0}, {x:0,y:0.35,z:0});
-    spherical(parts.ulegL.rb, parts.llegL.rb, {x:0,y:-0.35,z:0}, {x:0,y:0.35,z:0});
-    spherical(parts.ulegR.rb, parts.llegR.rb, {x:0,y:-0.35,z:0}, {x:0,y:0.35,z:0});
+
+    // Knees (Hinge, -2.5 to 0 rads)
+    revolute(parts.ulegL.rb, parts.llegL.rb, {x:0,y:-0.35,z:0}, {x:0,y:0.35,z:0}, -2.5, 0);
+    revolute(parts.ulegR.rb, parts.llegR.rb, {x:0,y:-0.35,z:0}, {x:0,y:0.35,z:0}, -2.5, 0);
 
     // ---------- FIXED DRAG SYSTEM ----------
     const raycaster = new THREE.Raycaster();
@@ -182,12 +205,9 @@
     let dragging = false;
     let draggedBody = null;
     let dragJoint = null;
-
-    // Kinematic body for the mouse cursor
     const dragHandleRB = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 100, 0)
     );
-    // Sensor collider ensures it doesn't smash into things, but exists in world
     world.createCollider(RAPIER.ColliderDesc.ball(0.01).setSensor(true), dragHandleRB);
 
     const dragPlane = new THREE.Plane();
@@ -202,46 +222,29 @@
     function startDrag(e) {
       getMouse(e);
       raycaster.setFromCamera(mouseNDC, camera);
-
       const meshes = [...meshToBody.keys()];
       const hits = raycaster.intersectObjects(meshes, false);
       
       if (!hits.length) return;
-
       const hit = hits[0];
-      const mesh = hit.object; // This is the visual mesh
-      const body = meshToBody.get(mesh); // This is the physics body
+      const mesh = hit.object; 
+      const body = meshToBody.get(mesh);
       if (!body) return;
 
-      // Disable orbit controls so we don't spin the camera while dragging
       controls.enabled = false;
-
-      // Define plane for dragging depth
       dragPlane.setFromNormalAndCoplanarPoint(
         camera.getWorldDirection(new THREE.Vector3()).negate(),
         hit.point
       );
-
-      // Move physics handle to exact hit point
       dragHandleRB.setNextKinematicTranslation(hit.point);
 
-      // --- FIX: CALCULATE LOCAL POINT USING THREE.JS ---
-      // Rapier bodies don't have worldPointToLocal. 
-      // But the Mesh is at the exact same place. 
-      // We take the world hit point, and convert it to the Mesh's local space.
       const localAnchor = mesh.worldToLocal(hit.point.clone());
-      
       const params = RAPIER.JointData.spherical({ x:0, y:0, z:0 }, localAnchor);
       params.stiffness = 1.0; 
       params.damping = 1.0;
 
-      // Create the joint
       dragJoint = world.createImpulseJoint(params, dragHandleRB, body, true);
-      
-      // Wake up the body (in case it was sleeping)
       body.wakeUp();
-
-      // Set state
       draggedBody = body;
       dragging = true;
     }
@@ -249,7 +252,6 @@
     function moveDrag(e) {
       if (!dragging) return;
       getMouse(e);
-      
       raycaster.setFromCamera(mouseNDC, camera);
       if (raycaster.ray.intersectPlane(dragPlane, dragHit)) {
         dragHandleRB.setNextKinematicTranslation(dragHit);
@@ -258,16 +260,11 @@
     }
 
     function endDrag() {
-      // Restore controls
       controls.enabled = true;
-      
       if (!dragging) return;
-      
-      // --- FIX: CHECK IF JOINT EXISTS ---
       if (dragJoint) {
         world.removeImpulseJoint(dragJoint, true);
       }
-      
       dragJoint = null;
       draggedBody = null;
       dragging = false;
@@ -279,7 +276,6 @@
     window.addEventListener('pointermove', moveDrag);
     window.addEventListener('pointerup', endDrag);
 
-    // ---------- Resize ----------
     window.addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
@@ -289,6 +285,10 @@
     // ---------- Loop ----------
     const qTmp = new THREE.Quaternion();
 
+    // Max Speeds (Fixes "far too high speed")
+    const MAX_LINEAR_VELOCITY = 10.0;
+    const MAX_ANGULAR_VELOCITY = 15.0;
+
     function animate() {
       requestAnimationFrame(animate);
       world.step();
@@ -296,6 +296,27 @@
       for (const [handle, mesh] of bodyToMesh.entries()) {
         const rb = world.getRigidBody(handle);
         if(!rb) continue;
+
+        // --- SPEED CLAMPING ---
+        // This ensures joints don't explode when dragged too hard
+        const lin = rb.linvel();
+        const ang = rb.angvel();
+        
+        // Clamp Linear Velocity
+        const lLenSq = lin.x*lin.x + lin.y*lin.y + lin.z*lin.z;
+        if (lLenSq > MAX_LINEAR_VELOCITY * MAX_LINEAR_VELOCITY) {
+          const scale = MAX_LINEAR_VELOCITY / Math.sqrt(lLenSq);
+          rb.setLinvel({ x: lin.x * scale, y: lin.y * scale, z: lin.z * scale }, true);
+        }
+
+        // Clamp Angular Velocity
+        const aLenSq = ang.x*ang.x + ang.y*ang.y + ang.z*ang.z;
+        if (aLenSq > MAX_ANGULAR_VELOCITY * MAX_ANGULAR_VELOCITY) {
+          const scale = MAX_ANGULAR_VELOCITY / Math.sqrt(aLenSq);
+          rb.setAngvel({ x: ang.x * scale, y: ang.y * scale, z: ang.z * scale }, true);
+        }
+        // ----------------------
+
         const t = rb.translation();
         const r = rb.rotation();
         mesh.position.set(t.x, t.y, t.z);
