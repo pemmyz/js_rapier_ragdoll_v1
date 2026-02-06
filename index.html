@@ -13,7 +13,7 @@
       padding:10px 12px; border-radius:12px;
       font-size:14px; line-height:1.35;
       user-select:none;
-      pointer-events:none; /* Let clicks pass through to canvas */
+      pointer-events:none;
     }
     #info b{ color:#ffffff; }
   </style>
@@ -26,7 +26,7 @@
     • Scroll = zoom
   </div>
 
-  <!-- 1. Add Import Map to resolve "three" inside OrbitControls -->
+  <!-- Import Map required for three/addons -->
   <script type="importmap">
     {
       "imports": {
@@ -37,7 +37,6 @@
   </script>
 
   <script type="module">
-    // 2. Use the mapped names
     import * as THREE from "three";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
     import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js";
@@ -69,7 +68,6 @@
     dir.shadow.mapSize.height = 2048;
     scene.add(dir);
 
-    // Ground visuals
     const groundMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 });
     const groundGeo = new THREE.BoxGeometry(40, 1, 40);
     const groundMesh = new THREE.Mesh(groundGeo, groundMat);
@@ -78,12 +76,12 @@
     scene.add(groundMesh);
 
     // ---------- Rapier Setup ----------
-    await RAPIER.init(); // Wait for WASM
+    await RAPIER.init();
 
     const gravity = { x: 0, y: -9.81, z: 0 };
     const world = new RAPIER.World(gravity);
 
-    // Ground collider
+    // Ground physics
     {
       const rb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.5, 0));
       world.createCollider(RAPIER.ColliderDesc.cuboid(20, 0.5, 20).setFriction(1.0), rb);
@@ -94,7 +92,6 @@
     const bodyToMesh = new Map(); 
 
     function addDynamicCapsule(radius, halfHeight, x, y, z, color) {
-      // Rapier capsule uses "halfHeight" = half length of the cylinder part
       const rbDesc = RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(x, y, z)
         .setLinearDamping(0.5)
@@ -109,7 +106,6 @@
 
       world.createCollider(colDesc, rb);
 
-      // Three capsule mesh
       const geo = new THREE.CapsuleGeometry(radius, halfHeight * 2, 8, 16);
       const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
       const mesh = new THREE.Mesh(geo, mat);
@@ -149,60 +145,37 @@
       return { rb, mesh };
     }
 
-    // ---------- Build Ragdoll ----------
+    // ---------- Ragdoll ----------
     const parts = {};
-
-    // Torso + pelvis
     parts.torso  = addDynamicCapsule(0.25, 0.35, 0, 3.0, 0, 0x60a5fa);
     parts.pelvis = addDynamicBox(0.30, 0.15, 0.15, 0, 2.3, 0, 0x3b82f6);
-
-    // Head
     parts.head = addDynamicCapsule(0.18, 0.05, 0, 3.8, 0, 0xfbbf24);
-
-    // Arms
     parts.uarmL = addDynamicCapsule(0.10, 0.25, -0.60, 3.15, 0, 0x93c5fd);
     parts.larmL = addDynamicCapsule(0.09, 0.25, -1.00, 2.85, 0, 0x93c5fd);
-
     parts.uarmR = addDynamicCapsule(0.10, 0.25,  0.60, 3.15, 0, 0x93c5fd);
     parts.larmR = addDynamicCapsule(0.09, 0.25,  1.00, 2.85, 0, 0x93c5fd);
-
-    // Legs
     parts.ulegL = addDynamicCapsule(0.12, 0.30, -0.25, 1.7, 0, 0x2563eb);
     parts.llegL = addDynamicCapsule(0.11, 0.30, -0.25, 0.9, 0, 0x2563eb);
-
     parts.ulegR = addDynamicCapsule(0.12, 0.30,  0.25, 1.7, 0, 0x2563eb);
     parts.llegR = addDynamicCapsule(0.11, 0.30,  0.25, 0.9, 0, 0x2563eb);
 
-    // Joints helper
-    function spherical(a, b, anchorA, anchorB, limit = 0.8) {
+    function spherical(a, b, anchorA, anchorB) {
       const params = RAPIER.JointData.spherical(anchorA, anchorB);
-      // Not all spherical joints in simple physics support limits cleanly without configuration,
-      // but ImpulseJoints work well for holding things together.
       return world.createImpulseJoint(params, a, b, true);
     }
 
-    // Connect Parts
-    spherical(parts.torso.rb, parts.pelvis.rb, { x:0, y:-0.45, z:0 }, { x:0, y:0.20, z:0 }); // Spine
-    spherical(parts.torso.rb, parts.head.rb,   { x:0, y:0.45, z:0 },  { x:0, y:-0.15, z:0 }); // Neck
+    spherical(parts.torso.rb, parts.pelvis.rb, {x:0,y:-0.45,z:0}, {x:0,y:0.20,z:0});
+    spherical(parts.torso.rb, parts.head.rb,   {x:0,y:0.45,z:0},  {x:0,y:-0.15,z:0});
+    spherical(parts.torso.rb, parts.uarmL.rb, {x:-0.35,y:0.25,z:0}, {x:0,y:0.30,z:0});
+    spherical(parts.torso.rb, parts.uarmR.rb, {x: 0.35,y:0.25,z:0}, {x:0,y:0.30,z:0});
+    spherical(parts.uarmL.rb, parts.larmL.rb, {x:0,y:-0.30,z:0}, {x:0,y:0.30,z:0});
+    spherical(parts.uarmR.rb, parts.larmR.rb, {x:0,y:-0.30,z:0}, {x:0,y:0.30,z:0});
+    spherical(parts.pelvis.rb, parts.ulegL.rb, {x:-0.20,y:-0.15,z:0}, {x:0,y:0.35,z:0});
+    spherical(parts.pelvis.rb, parts.ulegR.rb, {x: 0.20,y:-0.15,z:0}, {x:0,y:0.35,z:0});
+    spherical(parts.ulegL.rb, parts.llegL.rb, {x:0,y:-0.35,z:0}, {x:0,y:0.35,z:0});
+    spherical(parts.ulegR.rb, parts.llegR.rb, {x:0,y:-0.35,z:0}, {x:0,y:0.35,z:0});
 
-    // Shoulders
-    spherical(parts.torso.rb, parts.uarmL.rb, { x:-0.35, y:0.25, z:0 }, { x:0, y:0.30, z:0 });
-    spherical(parts.torso.rb, parts.uarmR.rb, { x: 0.35, y:0.25, z:0 }, { x:0, y:0.30, z:0 });
-
-    // Elbows
-    spherical(parts.uarmL.rb, parts.larmL.rb, { x:0, y:-0.30, z:0 }, { x:0, y:0.30, z:0 });
-    spherical(parts.uarmR.rb, parts.larmR.rb, { x:0, y:-0.30, z:0 }, { x:0, y:0.30, z:0 });
-
-    // Hips
-    spherical(parts.pelvis.rb, parts.ulegL.rb, { x:-0.20, y:-0.15, z:0 }, { x:0, y:0.35, z:0 });
-    spherical(parts.pelvis.rb, parts.ulegR.rb, { x: 0.20, y:-0.15, z:0 }, { x:0, y:0.35, z:0 });
-
-    // Knees
-    spherical(parts.ulegL.rb, parts.llegL.rb, { x:0, y:-0.35, z:0 }, { x:0, y:0.35, z:0 });
-    spherical(parts.ulegR.rb, parts.llegR.rb, { x:0, y:-0.35, z:0 }, { x:0, y:0.35, z:0 });
-
-
-    // ---------- Drag System ----------
+    // ---------- FIXED DRAG SYSTEM ----------
     const raycaster = new THREE.Raycaster();
     const mouseNDC = new THREE.Vector2();
 
@@ -210,11 +183,11 @@
     let draggedBody = null;
     let dragJoint = null;
 
-    // Invisible kinematic body to pull things
+    // Kinematic body for the mouse cursor
     const dragHandleRB = world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 100, 0)
     );
-    // Needs a collider to exist in physics effectively for some checks, though impulse joints work without collision
+    // Sensor collider ensures it doesn't smash into things, but exists in world
     world.createCollider(RAPIER.ColliderDesc.ball(0.01).setSensor(true), dragHandleRB);
 
     const dragPlane = new THREE.Plane();
@@ -236,35 +209,41 @@
       if (!hits.length) return;
 
       const hit = hits[0];
-      const body = meshToBody.get(hit.object);
+      const mesh = hit.object; // This is the visual mesh
+      const body = meshToBody.get(mesh); // This is the physics body
       if (!body) return;
 
-      // Disable orbit controls while dragging
+      // Disable orbit controls so we don't spin the camera while dragging
       controls.enabled = false;
-      dragging = true;
-      draggedBody = body;
 
-      // Set drag plane to face camera at hit depth
+      // Define plane for dragging depth
       dragPlane.setFromNormalAndCoplanarPoint(
         camera.getWorldDirection(new THREE.Vector3()).negate(),
         hit.point
       );
 
-      // Snap handle to hit point
+      // Move physics handle to exact hit point
       dragHandleRB.setNextKinematicTranslation(hit.point);
 
-      // Connect handle to body
-      // We calculate local anchor on body so we grab exactly where we clicked
-      const localAnchor = body.worldPointToLocal(hit.point);
+      // --- FIX: CALCULATE LOCAL POINT USING THREE.JS ---
+      // Rapier bodies don't have worldPointToLocal. 
+      // But the Mesh is at the exact same place. 
+      // We take the world hit point, and convert it to the Mesh's local space.
+      const localAnchor = mesh.worldToLocal(hit.point.clone());
       
-      // Spherical joint between kinematic handle and dynamic body
       const params = RAPIER.JointData.spherical({ x:0, y:0, z:0 }, localAnchor);
-      // Making it 'springy' helps stability
       params.stiffness = 1.0; 
       params.damping = 1.0;
 
+      // Create the joint
       dragJoint = world.createImpulseJoint(params, dragHandleRB, body, true);
+      
+      // Wake up the body (in case it was sleeping)
       body.wakeUp();
+
+      // Set state
+      draggedBody = body;
+      dragging = true;
     }
 
     function moveDrag(e) {
@@ -279,13 +258,19 @@
     }
 
     function endDrag() {
+      // Restore controls
+      controls.enabled = true;
+      
       if (!dragging) return;
       
-      world.removeImpulseJoint(dragJoint, true);
+      // --- FIX: CHECK IF JOINT EXISTS ---
+      if (dragJoint) {
+        world.removeImpulseJoint(dragJoint, true);
+      }
+      
       dragJoint = null;
       draggedBody = null;
       dragging = false;
-      controls.enabled = true;
     }
 
     window.addEventListener('pointerdown', (e) => {
@@ -306,10 +291,8 @@
 
     function animate() {
       requestAnimationFrame(animate);
-
       world.step();
 
-      // Sync visual meshes to physics bodies
       for (const [handle, mesh] of bodyToMesh.entries()) {
         const rb = world.getRigidBody(handle);
         if(!rb) continue;
