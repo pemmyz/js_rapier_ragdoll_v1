@@ -1,0 +1,26 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #0b0f16;
+}
+
+#info {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  font-family: system-ui, sans-serif;
+  color: #d7e3ff;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.35;
+  user-select: none;
+  pointer-events: none;
+  z-index: 10;
+}
+
+#info b {
+  color: #ffffff;
+}
