@@ -98,9 +98,12 @@ npx serve
 This is intentionally minimal:
 
 ```
-.
-└── index.html
+/
+├── index.html      # Main HTML entry
+├── style.css       # UI & HUD styling
+└── script.js/      # Game logic, physics, AI, rendering
 ```
+
 
 ---
 
