@@ -13,6 +13,9 @@ It includes:
 - **Velocity clamping** (linear + angular) to prevent “exploding” joints  
 - OrbitControls camera (scroll zoom + orbit)
 
+
+## Play it now: https://pemmyz.github.io/js_rapier_ragdoll_v1/
+
 ---
 
 ## Screenshots
