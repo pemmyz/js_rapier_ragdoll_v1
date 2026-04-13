@@ -1,12 +1,48 @@
+/* ROOT & BODY SETUP */
 html, body {
   margin: 0;
   padding: 0;
-  overflow: hidden;
   background: #0b0f16;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden; /* Prevent scrolling entirely for native app feel */
+  color: white;
 }
 
-#info {
+/* --- MOBILE MODE LOCK --- */
+/* Applied by JS when fullscreen is active */
+body.mobile-mode {
   position: fixed;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  touch-action: none; /* Disables browser gestures */
+}
+
+/* --- THE SCREEN (Fixed Internal Resolution) --- */
+#screen {
+  width: 960px;  /* Base Width */
+  height: 720px; /* Base Height */
+  background: #0b0f16;
+  position: relative;
+  overflow: hidden;
+  /* Important for scaling from the middle */
+  transform-origin: center center;
+  box-shadow: 0 0 50px rgba(0,0,0,0.8);
+  flex-shrink: 0;
+}
+
+#screen canvas {
+  display: block;
+}
+
+/* --- INFO BOX --- */
+#info {
+  position: absolute;
   left: 12px;
   top: 12px;
   font-family: system-ui, sans-serif;
@@ -20,7 +56,79 @@ html, body {
   pointer-events: none;
   z-index: 10;
 }
+#info b { color: #ffffff; }
 
-#info b {
-  color: #ffffff;
+
+
+/* --- TOGGLE BUTTON --- */
+#mobile-btn {
+  position: fixed;
+  top: 15px; 
+  left: 15px; /* <-- Changed from right to left */
+  z-index: 2000;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(4px);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  font-size: 14px;
+  padding: 10px 15px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+
+
+#mobile-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Hide the button when in mobile mode */
+body.mobile-mode #mobile-btn { display: none; }
+
+/* --- MOBILE CONTROLS OVERLAY --- */
+#mobile-controls {
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; /* Let clicks pass through to empty space */
+  z-index: 3000;
+  display: none; /* Hidden by default */
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* Show controls only when in mobile mode */
+body.mobile-mode #mobile-controls { display: flex; }
+
+/* --- CONTROL BUTTONS --- */
+.mobile-control-btn {
+  pointer-events: auto; /* Re-enable clicks for buttons */
+  width: 90px; height: 90px;
+  background: rgba(255,255,255,0.15);
+  border: 3px solid rgba(255,255,255,0.4);
+  border-radius: 50%;
+  color: white;
+  font-size: 40px;
+  display: flex; justify-content: center; align-items: center;
+  user-select: none;
+  backdrop-filter: blur(4px);
+  margin-bottom: 20px;
+  transition: transform 0.1s, background 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-control-btn:active {
+  background: rgba(255,255,255,0.4);
+  transform: scale(0.95);
+}
+#mobile-dpad {
+  display: flex;
+  gap: 15px;
+  margin-left: 20px;
+  margin-bottom: 20px;
+}
+#mobile-action {
+  margin-right: 40px;
+  margin-bottom: 40px;
 }

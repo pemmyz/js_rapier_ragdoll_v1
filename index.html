@@ -2,16 +2,39 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Three.js + Rapier Ragdoll (Limits & Speed Cap)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Three.js + Rapier Ragdoll (Mobile Fullscreen)</title>
+  <!-- REQUIRED METADATA -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="info">
-    <b>Ragdoll + Rapier</b><br/>
-    • Speed Limited & Joints Locked<br/>
-    • Left click = drag<br/>
-    • Scroll = zoom
+
+  <!-- TOGGLE BUTTON -->
+  <button id="mobile-btn">📱 Fullscreen</button>
+
+  <!-- GAME CONTAINER (Wraps the content to be scaled) -->
+  <div id="game-container">
+      <!-- THE SCREEN: Fixed resolution internal logic (960x720) -->
+      <div id="screen">
+          <div id="info">
+            <b>Ragdoll + Rapier</b><br/>
+            • Speed Limited & Joints Locked<br/>
+            • Touch/Left click = drag<br/>
+            • Scroll/Pinch = zoom
+          </div>
+          <!-- Three.js Canvas will be appended here by script.js -->
+      </div>
+  </div>
+
+  <!-- MOBILE TOUCH CONTROLS OVERLAY -->
+  <div id="mobile-controls">
+      <div id="mobile-dpad">
+          <button id="mobile-left" class="mobile-control-btn">◀</button>
+          <button id="mobile-right" class="mobile-control-btn">▶</button>
+      </div>
+      <div id="mobile-action">
+          <button id="mobile-up" class="mobile-control-btn">▲</button>
+      </div>
   </div>
 
   <!-- Import Map: Defines external module locations -->

@@ -6,14 +6,19 @@ import RAPIER from "@dimforge/rapier3d-compat";
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x0b0f16, 10, 55);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+// Set base resolution for CSS Scaling
+const baseWidth = 960;
+const baseHeight = 720;
+
+const camera = new THREE.PerspectiveCamera(60, baseWidth / baseHeight, 0.1, 200);
 camera.position.set(0, 4, 10);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(baseWidth, baseHeight); // Fixed internal resolution
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-document.body.appendChild(renderer.domElement);
+// Append to the screen wrapper instead of document.body
+document.getElementById('screen').appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -53,7 +58,6 @@ const meshToBody = new Map();
 const bodyToMesh = new Map();
 
 function addDynamicCapsule(radius, halfHeight, x, y, z, color) {
-  // Added damping to naturally slow things down
   const rbDesc = RAPIER.RigidBodyDesc.dynamic()
     .setTranslation(x, y, z)
     .setLinearDamping(0.5)
@@ -129,10 +133,8 @@ function spherical(a, b, anchorA, anchorB) {
 
 // Helper: Revolute Joint with Limits (Hinge for elbows/knees)
 function revolute(a, b, anchorA, anchorB, minAngle, maxAngle) {
-  // Rotation axis: X-axis ({x:1, y:0, z:0})
   const axis = { x: 1, y: 0, z: 0 };
   const params = RAPIER.JointData.revolute(anchorA, anchorB, axis);
-  // Enables joint limits
   params.limitsEnabled = true;
   params.limits = [minAngle, maxAngle];
   return world.createImpulseJoint(params, a, b, true);
@@ -148,7 +150,7 @@ spherical(parts.torso.rb, parts.head.rb, { x: 0, y: 0.45, z: 0 }, { x: 0, y: -0.
 spherical(parts.torso.rb, parts.uarmL.rb, { x: -0.35, y: 0.25, z: 0 }, { x: 0, y: 0.30, z: 0 });
 spherical(parts.torso.rb, parts.uarmR.rb, { x: 0.35, y: 0.25, z: 0 }, { x: 0, y: 0.30, z: 0 });
 
-// Elbows (Hinge, 0 to 2.5 rads)
+// Elbows
 revolute(parts.uarmL.rb, parts.larmL.rb, { x: 0, y: -0.30, z: 0 }, { x: 0, y: 0.30, z: 0 }, 0, 2.5);
 revolute(parts.uarmR.rb, parts.larmR.rb, { x: 0, y: -0.30, z: 0 }, { x: 0, y: 0.30, z: 0 }, 0, 2.5);
 
@@ -156,7 +158,7 @@ revolute(parts.uarmR.rb, parts.larmR.rb, { x: 0, y: -0.30, z: 0 }, { x: 0, y: 0.
 spherical(parts.pelvis.rb, parts.ulegL.rb, { x: -0.20, y: -0.15, z: 0 }, { x: 0, y: 0.35, z: 0 });
 spherical(parts.pelvis.rb, parts.ulegR.rb, { x: 0.20, y: -0.15, z: 0 }, { x: 0, y: 0.35, z: 0 });
 
-// Knees (Hinge, -2.5 to 0 rads)
+// Knees
 revolute(parts.ulegL.rb, parts.llegL.rb, { x: 0, y: -0.35, z: 0 }, { x: 0, y: 0.35, z: 0 }, -2.5, 0);
 revolute(parts.ulegR.rb, parts.llegR.rb, { x: 0, y: -0.35, z: 0 }, { x: 0, y: 0.35, z: 0 }, -2.5, 0);
 
@@ -167,7 +169,7 @@ const mouseNDC = new THREE.Vector2();
 let dragging = false;
 let draggedBody = null;
 let dragJoint = null;
-// A kinematic body that follows the mouse cursor
+
 const dragHandleRB = world.createRigidBody(
   RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 100, 0)
 );
@@ -177,6 +179,7 @@ const dragPlane = new THREE.Plane();
 const dragHit = new THREE.Vector3();
 
 function getMouse(e) {
+  // Works flawlessly with CSS transform scaling because it checks the actual rect on screen
   const r = renderer.domElement.getBoundingClientRect();
   mouseNDC.x = ((e.clientX - r.left) / r.width) * 2 - 1;
   mouseNDC.y = -(((e.clientY - r.top) / r.height) * 2 - 1);
@@ -195,7 +198,6 @@ function startDrag(e) {
   if (!body) return;
 
   controls.enabled = false;
-  // Create a plane perpendicular to camera direction to drag along
   dragPlane.setFromNormalAndCoplanarPoint(
     camera.getWorldDirection(new THREE.Vector3()).negate(),
     hit.point
@@ -240,16 +242,85 @@ window.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', moveDrag);
 window.addEventListener('pointerup', endDrag);
 
-window.addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
+// ---------- FULLSCREEN & MOBILE CONTROLS LOGIC ----------
+const mobileToggleBtn = document.getElementById('mobile-btn');
+const mobileControls = document.getElementById('mobile-controls');
+const mobileLeftBtn = document.getElementById('mobile-left');
+const mobileRightBtn = document.getElementById('mobile-right');
+const mobileUpBtn = document.getElementById('mobile-up');
+const screenElement = document.getElementById("screen");
+
+// Global input state
+const keys = { ArrowUp: false, ArrowLeft: false, ArrowRight: false, w: false, a: false, d: false, ' ': false };
+
+function scaleGame() {
+  const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
+  
+  // Calculate the scale to fit the window while maintaining aspect ratio
+  const scale = Math.min(
+      window.innerWidth / baseWidth,
+      window.innerHeight / baseHeight
+  );
+  
+  if (isFullscreen) {
+      screenElement.style.transform = `scale(${scale})`;
+      document.body.classList.add('mobile-mode'); // Activates CSS lock
+  } else {
+      // Still scale it so it fits perfectly on screen when not in fullscreen mode!
+      screenElement.style.transform = `scale(${scale})`; 
+      document.body.classList.remove('mobile-mode');
+  }
+}
+
+function goFull() {
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen();
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+}
+
+// Listeners for resizing and fullscreen changes
+window.addEventListener("resize", scaleGame);
+window.addEventListener("fullscreenchange", scaleGame);
+window.addEventListener("webkitfullscreenchange", scaleGame);
+
+// Initial check
+scaleGame();
+
+// Button Listener
+mobileToggleBtn.addEventListener('click', goFull);
+
+function setupMobileControls() {
+  if (!mobileControls) return;
+
+  const addControlListener = (element, key) => {
+      const pressKey = (e) => {
+          if(e.cancelable) e.preventDefault(); 
+          keys[key] = true;
+      };
+      const releaseKey = (e) => {
+          if(e.cancelable) e.preventDefault();
+          keys[key] = false;
+      };
+
+      element.addEventListener('touchstart', pressKey, { passive: false });
+      element.addEventListener('touchend', releaseKey, { passive: false });
+      element.addEventListener('touchcancel', releaseKey, { passive: false });
+      element.addEventListener('mousedown', pressKey);
+      element.addEventListener('mouseup', releaseKey);
+      element.addEventListener('mouseleave', (e) => {
+          if (e.buttons === 1) { releaseKey(e); }
+      });
+  };
+
+  addControlListener(mobileLeftBtn, 'a');
+  addControlListener(mobileRightBtn, 'd');
+  addControlListener(mobileUpBtn, 'w');
+}
+setupMobileControls();
 
 // ---------- Loop ----------
 const qTmp = new THREE.Quaternion();
 
-// Max Speeds (Fixes "far too high speed" during drag/collision)
 const MAX_LINEAR_VELOCITY = 10.0;
 const MAX_ANGULAR_VELOCITY = 15.0;
 
@@ -261,8 +332,6 @@ function animate() {
     const rb = world.getRigidBody(handle);
     if (!rb) continue;
 
-    // --- SPEED CLAMPING ---
-    // This ensures joints don't explode when dragged too hard
     const lin = rb.linvel();
     const ang = rb.angvel();
 
@@ -279,7 +348,6 @@ function animate() {
       const scale = MAX_ANGULAR_VELOCITY / Math.sqrt(aLenSq);
       rb.setAngvel({ x: ang.x * scale, y: ang.y * scale, z: ang.z * scale }, true);
     }
-    // ----------------------
 
     const t = rb.translation();
     const r = rb.rotation();
@@ -287,6 +355,15 @@ function animate() {
     qTmp.set(r.x, r.y, r.z, r.w);
     mesh.quaternion.copy(qTmp);
   }
+
+  // Example of using mobile inputs (keys object mapped to Touch Buttons)
+  // If you wanted to apply forces to the ragdoll pelvis based on d-pad:
+  /*
+  const pelvisRB = parts.pelvis.rb;
+  if (keys.a || keys.ArrowLeft) pelvisRB.applyImpulse({x: -0.5, y: 0, z: 0}, true);
+  if (keys.d || keys.ArrowRight) pelvisRB.applyImpulse({x: 0.5, y: 0, z: 0}, true);
+  if (keys.w || keys.ArrowUp) pelvisRB.applyImpulse({x: 0, y: 2.0, z: 0}, true);
+  */
 
   controls.update();
   renderer.render(scene, camera);
